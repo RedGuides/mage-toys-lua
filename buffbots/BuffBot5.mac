@@ -1,0 +1,779 @@
+| ButtBoff5: This version works for not just a single buffer, but an entire buff bot team
+| This will use EQBC server and NetBot to allow your entire bot team to interact with chat, tell, hail requests
+|
+| /hail <any-buff-bot>: This is equivalent to "/say "buff", which each member in the NetBot team will evaluate.
+|	In the .INI file, you will see "buff" is the generic request for all common buffs. Where as asking for a teleport
+|   or a corpse summon is a very specific request.
+|
+| /say <alt-ability>: Each member in the NetBot team will evaluate. If they have this ability in the .Ini config file, they will use this AA.
+|    examples: 
+|		/say invis  == enchanter bot will invis and invis to undeead you.
+|		/say summon == necro bot will summon your corpse
+|
+| /say <item>: Each member in the NetBot team will evaluate. Items and Alt Abilities are processed the same way.
+|	examples:
+|		/say wep 	== mage bot will give you pet weapons
+| 		/say mask	== mage bot will give you pet mask
+|		/say armor	== mage bot will give you pet armor
+|		/say heirloom	== mage bot will give you pet heirlooms
+|		/say toys	== mage bot will give you all pet toys
+|
+| /say item <count>: If you put an integer after the item name, the bot will give you multiple items. This is capped at 4.
+|	example:
+|		/say toys 2 == mage bot will give you two sets of pet toys
+|
+| /say vs /tell -- both should work equivalently, if you want to be less obvious about getting a buff, use /tell.
+| 
+| -------------------------------------------------------
+| Required Plugins: MQ2DanNet, MQ2Cast, MQ2SQLite
+| MQ2 version: mqnext. Other versions should work; untested.
+
+| /plugin MQ2DanNet
+| /plugin MQ2Cast
+| /plugin MQ2SQLite
+
+| color codes: https://docs.macroquest.org/macroquest/commands/slash-commands/echo
+| -------------------------------------------------------
+|
+| Forked from:
+|
+| BuffBot2 by MacQ
+| 1.0 - 2/25/2021		Initial Release
+| 1.3 - 3/14/2021 	New logic to handle low level spells
+| 									New [CLASS] INI variables per spell for Min/Max Target Level
+| 									Numerous logic changes and bug fixes
+| 									Embedded casting routine (formerly MQ2Cast2.inc)
+| 									Modified/Added some [General] INI variables
+| 1.4 - 6/21/2021		Increased main loop delay from 10 to 20
+| 									Added /autoinventory to main loop
+| 									Moved AcceptedItems to General INI category
+| 									Fixed bug related to reagent name not being properly communicated
+| 									Eliminated manditory use of Spell ID, can now use Spell ID or Spell Name
+| 1.5 - 8/24/2021		Added two new variables in individual Spell info .ini.  One variable for
+| 									spells that requrie a group (i.e., Necro corpse summon) or one variable for
+| 									spells that require targeting a corpse (i.e., Cleric rez). Added ability to
+| 									message targeted receipient if spell recast time is longer than a definable time.
+| 
+| Copyright 2021 by MacQ all rights reserved. 
+| 
+| This macro is only authorized for the personal use by members in good
+| standing of the MacroQuest2 VIP or RedGuides VIP forums. If you did not
+| pay for VIP access, then you are a cheap, non contributing bastard who
+| sucks the life out of others and will die in hell. 
+
+#Turbo 		80
+#Event Hail "#1# says, 'Hail, #2#'"
+#Event GemItemAA "#1# says, '#2#'"
+#Event GemItemAA "#1# tells you, '#2#'"
+#Event BindPortalReturnTrip "You have entered Bloodfalls."
+#bind MakeChatleader /makechatleader
+#bind RemoveChatLeader /removechatleader
+
+Sub Main(bool StartupAnnounce)
+	/declare	PCIniFile 						string	outer 	BuffBot5.ini
+	/declare 	ShowDebug 						bool 	outer 	TRUE
+	/declare 	ShowDebugVerbose 				bool 	outer 	TRUE
+	/declare 	ChatLeader 						string 	outer 	NULL
+	/declare    CanCastAnywhere                 bool    outer   FALSE 
+	
+	/dnet localecho off
+
+	/call LoadIni
+	/call LogIt Starting BuffBot5
+
+	/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> ${Me.CleanName} [${Me.Class}]"
+
+	/if ( !${CanCastAnywhere} && ${BuffZoneCheck} && ${BuffZoneShortNames.Length} && !${Select[${Zone.ShortName},${BuffZoneShortNames}]} ) {
+		/echo ERROR: Can't start in ${Zone.ShortName} must be in ${BuffZoneShortNames}
+		/call LogIt "Can't start in ${Zone.ShortName} must be in ${BuffZoneShortNames}"
+		/docommand ${BuffZoneErrorAction}
+	}
+	/afk off
+	/memspellset ${SpellSet}
+	/if ( ${StartupAnnounce} ) /docommand ${StartupAnnounceMessage}
+	/if ( !${Me.Sitting} ) /sit
+	/delay 50 ${Me.Sitting}
+	/if ( ${StartupClearWindows} ) {
+		/mqclear
+		/clear
+	}
+	/echo Starting \atBuffBot5\ax
+	/doevents flush
+
+	/sqlite query buffbots.db chat_leader_query select buff_bot from bot_chat where active = 1;
+	/declare numLeaders int local ${sqlite.rows[chat_leader_query]}
+	/if (${numLeaders} == 0) {
+		/sqlite query buffbots.db bots_del DELETE FROM bots; |-- chat leader clears old bot buff history on startup
+		/call MakeChatleader
+	} else {
+		/varset ChatLeader ${sqlite.result[chat_leader_query 1 buff_bot]}
+		/sqlite query buffbots.db chat_leader_query2 INSERT INTO bot_chat VALUES('${Me.CleanName}', 0)
+	}
+	
+	/djoin bots
+	/dgaexecute all /echo \at${Me.CleanName}\ax has joined the \aybuff bot\ax team.
+
+	/while ( TRUE ) {
+		/while ( ${Cursor.ID} ) {
+			/autoinventory
+			/delay 10
+		}
+
+		/if ( ${Window[TradeWnd].Open} ) /call Trade
+		/doevent
+		/call consumeQueue
+		/delay 20
+	}
+	:OnExit
+		/echo \ayTerminating macro...\ax
+		/echo Goodbye \ay${Me.CleanName}\ax . Last known ChatLeader was: \ag${ChatLeader}\ax
+		/if ( ${Me.CleanName.Equal[${ChatLeader}]}) {
+			/call RemoveChatLeader
+			/dgaexecute all /echo There is currently \ayno chatleader assigned\ax, please run \a-r/makechatleader\ax on one of the bots now.
+		}
+		/dleave bots
+
+/return
+
+Sub MakeChatleader
+	/call RemoveChatLeader
+	/sqlite query buffbots.db chat_leader_query2 INSERT INTO bot_chat VALUES('${Me.CleanName}', 1) ON CONFLICT(buff_bot) DO UPDATE SET active=1 WHERE buff_bot = '${Me.CleanName}';
+	/dgaexecute all /echo \at${Me.CleanName}\ax has taken over as the current chat leader.\ax
+	/dgaexecute bots /if (${Defined[ChatLeader]}) /varset ChatLeader ${Me.CleanName}
+/return
+
+Sub RemoveChatLeader
+	/sqlite query buffbots.db reset_active UPDATE bot_chat SET active=0;
+/return
+
+Sub Bind_MakeChatleader
+	/call MakeChatleader
+/return
+
+Sub Bind_RemoveChatleader
+	/call RemoveChatLeader
+	/dgaexecute all /echo There is currently \ayno chatleader assigned\ax, please run \a-r/makechatleader\ax on one of the bots now.
+/return
+
+Sub ProcComm(string PCTarget, string Command, string BuffHash, int ItemCount)
+	/declare	i								int		local
+	/declare    j                               int     local
+	/declare	IsInternalKeyMatched 			bool	local	FALSE
+	/declare	IsBuffFinished					bool	local	FALSE
+	/declare 	spell_id						int 	local
+	/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> ProcComm: ${Me.CleanName} => ${PCTarget} <-- ${Command} --> ${BuffHash} (${ItemCount})"
+
+	/target pc ${PCTarget}
+	
+	/delay 20 ${Target.ID}
+	/if ( !${Target.ID} ) {
+		/call NotifyPC "${Me.CleanName}" "${PCTarget}" "Sorry, ${Me.CleanName} can't target you" "BUFF_ABORT"
+		/call LogIt "Error Can't Target ${PCTarget}"
+		/return
+	} else { 
+		/call NotifyPC "${Me.CleanName}" "${PCTarget}" "Starting buffs: [${Command}]" "BUFF_START"
+	}
+
+	/for i 1 to ${SpellTotal}
+		/varset IsInternalKeyMatched FALSE
+		/if ( ${Window[TradeWnd].Open} ) /notify TradeWnd TRDW_Cancel_Button leftmouseup
+		/if ( ${SpellSkip${i}} || !${Select[${Command},${SpellInternalKey${i}}]} ) /continue
+		/if ( ${SpellMustGroup${i}} && !${Group.Member[${PCTarget}].Index} ) {
+			/varset spell_id ${SpellID${i}}
+			/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> SpellID: ${spell_id} "
+			/if (${spell_id} == 7009 && (${Me.Class.ShortName.NotEqual[DRU]} || ${Me.Class.ShortName.NotEqual[WIZ]})) {
+				/if ( !${Me.AltAbilityReady[Teleport Bind]} ) {
+					/call PCChatFromLeader ${PCTarget} "Try again later. You have to wait ${Math.Calc[${Me.AltAbilityTimer[Teleport Bind]} / 1000].Int} seconds until I can cast Teleport Bind."
+					/varset CanCastAnywhere FALSE
+					/continue
+				} else {
+					/varset CanCastAnywhere TRUE
+				}
+				/varset IsBuffFinished FALSE
+			}
+			/call PCGroupInvite ${PCTarget}
+			/if ( !${Macro.Return} ) {
+				/call PCChatFromLeader ${PCTarget} "You failed to join my group - skipping ${SpellName${i}}"
+				/call LogIt "Error ${Target.CleanName} - Failed to join group for ${SpellName${i}}"
+				/varset IsBuffFinished FALSE
+				/continue
+			}
+		}
+		/if ( ${SpellTargetCorpse${i}} ) {
+			/if ( ${SpawnCount[${PCTarget} corpse]} ) {
+				/target ${Spawn[${PCTarget} corpse]}
+			} else {
+				/call PCChatFromLeader ${PCTarget} "I don't see any corpse for you - skipping ${SpellName${i}}"
+				/call LogIt "Error ${Target.CleanName} - No corpse found - skipping ${SpellName${i}}"
+				/varset IsBuffFinished TRUE
+				/continue
+			}
+		}
+
+		/varset IsInternalKeyMatched TRUE
+		/if (${ItemCount} > 1 && ${Select[items,${SpellInternalKey${i}}]}) {
+			/for j 1 to ${ItemCount}
+				/call Cast "${SpellName${i}}" ${SpellID${i}} ${SpellType${i}} 75s 3 ${SpellRefreshWarning} ${SpellMinTarget${i}} ${SpellMaxTarget${i}} ${SpellInternalKey${i}}
+			/next j
+		} else {
+			/call Cast "${SpellName${i}}" ${SpellID${i}} ${SpellType${i}} 75s 3 ${SpellRefreshWarning} ${SpellMinTarget${i}} ${SpellMaxTarget${i}} ${SpellInternalKey${i}}
+		}
+
+		/if ( ${Macro.Return.Equal[CAST_SUCCESS]} ) {
+			/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> Buffed ${PCTarget} - ${SpellName${i}} - ${SpellID${i}}"
+			/varset IsBuffFinished TRUE
+		} else {
+			/if ( ${Macro.Return.Equal[CAST_NOREAGENT]} ) {
+				/call PCChatFromLeader ${PCTarget} "Sorry, ${Me.CleanName} needs more ${Reagents.Arg[${Math.Calc[${Select[${Spell[${SpellID}].ReagentsID[1]},${Reagents},,]}+2]},,]}s to cast ${SpellName${i}}"
+				/call LogIt "Error ${Target.CleanName} - Need ${Reagents.Arg[${Math.Calc[${Select[${Spell[${SpellID}].ReagentsID[1]},${Reagents},,]}+2]},,]}s for ${SpellName${i}} - ${Macro.Return}"
+			} else {
+				/call LogIt "Error ${Target.CleanName} - ${SpellName${i}} - ${SpellID${i}} - ${Macro.Return}"
+				/varset IsBuffFinished TRUE
+			}
+		}
+	/next i
+
+	/if ( ${IsBuffFinished} ) {
+		/call NotifyPC ${Me.CleanName} ${PCTarget} "Finished" "BUFF_COMPLETE"
+		/varset IsBuffFinished FALSE
+		/varset IsInternalKeyMatched FALSE
+	} else {
+		/if ( ${IsInternalKeyMatched} ) {
+			/call NotifyPC ${Me.CleanName} ${PCTarget} "Sorry, I have no buffs that will stick on you" "BUFF_ABORT"
+			/varset IsInternalKeyMatched FALSE
+		} else {
+			/call NotifyPC ${Me.CleanName} ${PCTarget} "Sorry, I don't understand [${Command}]" "BUFF_ERROR"
+			/call LogIt "Junk from ${PCTarget} - [${Command}]"
+			/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}: ${Macro.Return}] ---> Junk Request]"
+		}
+	}
+
+	/if ( !${Me.Sitting} ) /sit
+	/delay 50 ${Me.Sitting}
+/return
+
+Sub Cast(string SpellName, int SpellID, string SpellType, timer GiveUpTimer, int CastAttempts, int SpellRefreshNotice, int TargetMinLvl, int TargetMaxLvl, string SpellInternalKey)
+	/if ( ${SpellID} ) {
+		/varset SpellName ${SpellID}
+	} else {
+		/if ( ${SpellType.Left[3].Equal[gem]} ) /varset SpellName ${Spell[${SpellName}].RankName}
+	}
+	/if ( ( ${SpellType.Equal[item]} && !${FindItem[${SpellName}].ID} ) || ( ${SpellType.Left[3].Equal[gem]} && !${Me.Book[${Spell[${SpellName}]}]} ) || ( ${SpellType.Equal[alt]} && !${Me.AltAbility[${SpellName}]} ) ) {
+ 		/echo \arUnknown Spell/Item/AA: Name:${SpellName} ID:${SpellID} Type:${SpellType}\ay
+ 		/return CAST_UNKNOWN
+ 	}
+	
+	/if (!${Select[items,${SpellInternalKey}]}) {
+ 	|	/if ( !${Spell[${SpellName}].StacksTarget} ) /return CAST_NOSTACKS
+	}
+
+ 	/if ( ( ${TargetMinLvl} && ${Target.Level} < ${TargetMinLvl} ) || ( !${TargetMinLvl} && ${SpellType.Left[3].Equal[gem]} && !${Spell[${SpellName}].Category.Equal[Transport]} && !${Spell[${SpellName}].Category.Equal[Create Item]} && ${Target.Level} < ${WillItStick[${Spell[${SpellName}].Level}]} ) ) /return CAST_TARGETBELOWMIN
+ 	/if ( ${TargetMaxLvl} && ${Target.Level} > ${TargetMaxLvl} ) /return CAST_TARGETABOVEMAX
+ 	/if ( ${Spell[${SpellName}].ReagentID[1]} > 0 && ${FindItemCount[${Spell[${SpellName}].ReagentID[1]}]} < ${Spell[${SpellName}].ReagentCount[1]} ) /return CAST_NOREAGENT
+
+	/if ( ${SpellType.Left[3].Equal[gem]} ) {
+		/if ( ${Me.CurrentMana} < ${Spell[${SpellName}].Mana} ) /return CAST_NOMANA
+		/if ( ${Math.Calc[${Me.GemTimer[${Me.Gem[${SpellName}]}]} / 100].Int} > ${GiveUpTimer} ) /return CAST_TIMEOUT
+		/while ( ${Me.GemTimer[${Me.Gem[${SpellName}]}]} ) {
+	 		/if ( ${SpellRefreshNotice} && ${Math.Calc[${Me.GemTimer[${Me.Gem[${SpellName}]}]} / 1000].Int} > ${SpellRefreshNotice} ) {
+				/call PCChat ${Target} "Be Patient ${Math.Calc[${Me.GemTimer[${Me.Gem[${SpellName}]}]} / 1000].Int} seconds to cast ${SpellName}"
+				/call LogIt "Recast Warning - ${Target} - ${Math.Calc[${Me.GemTimer[${Me.Gem[${SpellName}]}]} / 1000].Int} seconds to cast ${SpellName}"
+				/varset SpellRefreshNotice 0
+			}
+			/delay 10
+		}
+	} else {
+		/if ( ${SpellType.Equal[item]} ) {
+			/if ( ${Me.CurrentMana} < ${Spell[${SpellName}].Mana} )/return CAST_NOMANA
+			/if ( ${Math.Calc[${FindItem[${SpellName}].Timer} * 60].Int} > ${GiveUpTimer} ) /return CAST_TIMEOUT
+			/while ( ${FindItem[${SpellName}].Timer} ) {
+	 			/if ( ${SpellRefreshNotice} && ${Math.Calc[${FindItem[${SpellName}].Timer} * 60].Int} > ${SpellRefreshNotice} ) {
+	 				/call PCChat ${Target} "Be Patient ${Math.Calc[${FindItem[${SpellName}].Timer} * 60].Int} seconds to cast ${SpellName}"
+	 				/call LogIt "Recast Warning - ${Target.CleanName} - ${SpellName} - ${SpellID} - ${Math.Calc[${FindItem[${SpellName}].Timer} * 60].Int} seconds to cast"
+ 					/varset SpellRefreshNotice 0
+				}
+				/delay 10
+			}
+		} else {
+			/if ( ${SpellType.Equal[alt]} ) {
+				/if ( ${Me.CurrentMana} < ${Spell[${AltAbility[${SpellName}.Name]}].Mana} ) /return CAST_NOMANA
+				/if ( ${Math.Calc[${Me.AltAbilityTimer[${SpellName}]} / 1000].Int} > ${GiveUpTimer} ) /return CAST_TIMEOUT
+				/while ( ${Me.AltAbilityTimer[${SpellName}]} ) {
+		 			/if ( ${SpellRefreshNotice} && ${Math.Calc[${Me.AltAbilityTimer[${SpellName}]} / 1000].Int} > ${SpellRefreshNotice} ) {
+						/call PCChat ${Target} "Be Patient ${Math.Calc[${Me.AltAbilityTimer[${SpellName}]} / 1000].Int} seconds to cast ${SpellName}"
+						/call LogIt "Recast Warning - ${Target.CleanName} - ${SpellName} - ${SpellID} - ${Math.Calc[${Me.AltAbilityTimer[${SpellName}]} / 1000].Int} seconds to cast ${SpellName}"
+						/varset SpellRefreshNotice 0
+					}	 			
+					/delay 10
+				}
+			}
+		}
+	}
+	
+	/while ( ${CastAttempts} ) {
+		/while ( ${Cursor.ID} ) {
+			/autoinventory
+			/delay 10
+		}
+		/if ( ${Me.Ducking} ) {
+			/keypress duck
+			/delay 5
+		}
+		/while ( ${Me.Moving} ) {
+			/if ( !${GiveUpTimer} ) /return CAST_MOVING
+			/delay 5
+		}
+		/casting "${SpellName}" ${SpellType}
+		/delay 5
+		/while (${Cast.Status.Find[C]}) {
+			/delay 5
+		}
+		/if ( ${Select[${Cast.Result}CAST_FIZZLE]} ) {
+			/varcalc CastAttempts ${CastAttempts} - 1
+			/if ( !${CastAttempts} ) /break
+		} else {
+			/break
+		}
+	}
+/return ${Cast.Result}
+
+Sub ListComm(string PCTarget)
+	/declare	i								int		local
+	/call PCChat ${PCTarget} "--- MY COMMANDS ---"
+	/for i 1 to ${SpellTotal}
+		/if ( !${SpellSkip${i}} && ${ListAll} || ( ( ( !${SpellMaxTarget${i}} && ${Spawn[PC ${PCTarget}].Level} >= ${WillItStick[${Spell[${SpellName${i}}].Level}]} ) || ( ${SpellMinTarget${i}} && ${Spawn[PC ${PCTarget}].Level} >= ${SpellMinTarget${i}} ) ) && ( !${SpellMaxTarget${i}} || ${Spawn[PC ${PCTarget}].Level} <= ${SpellMaxTarget${i}} ) ) ) {
+			/if ( !${SpellMinTarget${i}} ) {
+				/call PCChat ${PCTarget} "${SpellExternalKey${i}} = ${SpellName${i}} (Min level ${WillItStick[${Spell[${SpellName${i}}].Level}]} )"
+				/delay ${ListChatDelay}
+			} else {
+				/call PCChat ${PCTarget} "${SpellExternalKey${i}} = ${SpellName${i}} (Min level ${SpellMinTarget${i}} )"
+				/delay ${ListChatDelay}
+			}
+		}
+	/next i
+	/call PCChat ${PCTarget} "--- END-OF-LIST ---"
+/return
+
+Sub Trade
+	/declare	i								int		local
+	/declare 	isMatch							bool    local   FALSE
+	
+	/if ( ${BuffGuildOnly} && ${Spawn[PC $Spawn[${Window[TradeWnd].Child[TRDW_HisName].Text}].Guild.NotEqual[${Me.Guild}]} ) {
+		/call IsMatchTokenizedString ${Spawn[${Window[TradeWnd].Child[TRDW_HisName].Text}}]} "${BuffGuildOverride}"
+		/varset isMatch ${Macro.Return}
+		/if (!${isMatch}) {
+			/notify TradeWnd TRDW_Cancel_Button leftmouseup
+			/return
+		} else {
+			/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> ${BuffGuildOverride} is allowed to trade"
+		}
+	}
+	/delay 20s ${Window[TradeWnd].HisTradeReady}
+	/if ( ${Window[TradeWnd].HisTradeReady} ) {
+		/for i 8 to 15
+			/if ( ${Window[TradeWnd].Child[TRDW_TradeSlot${i}].Tooltip.Length} && !${Select[${Window[TradeWnd].Child[TRDW_TradeSlot${i}].Tooltip},${AcceptedItems}]} ) {
+				/call PCChat ${Target.CleanName} "Sorry, I don't accept ${Window[TradeWnd].Child[TRDW_TradeSlot${i}].Tooltip}s"
+				/notify TradeWnd TRDW_Cancel_Button leftmouseup
+				/return
+			}
+		/next i
+		/call PCChat ${Target.CleanName} "Thank You"
+		/notify TradeWnd TRDW_Trade_Button leftmouseup
+		/delay 20 !${Window[TradeWnd].Open}
+		/call LogIt "Trade from ${Target.CleanName}"
+	} else {
+		/call PCChat ${Target.CleanName} "Sorry, Trade Timed Out"
+		/notify TradeWnd TRDW_Cancel_Button leftmouseup
+		/delay 20 !${Window[TradeWnd].Open}
+		/call LogIt "Timed Out Trade from ${Target.CleanName}"
+	}
+/return
+
+Sub PCChat(string PCName, string PCMessage)
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> PCChat:: PCName: ${PCName} PCMessage: ${PCMessage}"
+	/if (!${Spawn[PC ${PCName}].Ducking) {
+		/docommand ${PCChat} ${PCName} ${PCMessage}
+		/delay ${PCChatDelay}
+	} 
+/return
+
+Sub PCChatFromLeader(string PCName, string PCMessage)
+	/if (!${Spawn[PC ${PCName}].Ducking) {
+		/if (${Me.CleanName.Equal[${ChatLeader}]}) {
+			/call PCChat "${PCName}" "${PCMessage}"
+		} else {
+			/dex ${ChatLeader} /tell "${PCName}" "${PCMessage}"
+			/delay ${PCChatDelay}	
+		}
+	}
+/return
+
+Sub LogIt(string LogMessage)
+	/if ( ${UseLogging} ) /mqlog ${Me.CleanName} - ${LogMessage} 
+/return
+
+Sub WillItStick(int BuffLevel)
+	/if ( ${BuffLevel} <= 50 ) /return 1
+	/if ( ${BuffLevel} <= 51 ) /return 40
+	/if ( ${BuffLevel} <= 53 ) /return 41
+	/if ( ${BuffLevel} <= 55 ) /return 42
+	/if ( ${BuffLevel} <= 57 ) /return 43
+	/if ( ${BuffLevel} <= 59 ) /return 44
+	/if ( ${BuffLevel} <= 61 ) /return 45
+	/if ( ${BuffLevel} <= 63 ) /return 46
+	/if ( ${BuffLevel} <= 65 ) /return 47
+	/if ( ${BuffLevel} <= 95 ) /return 61
+	/if ( ${BuffLevel} <= 100 ) /return 66
+	/if ( ${BuffLevel} <= 105 ) /return 71
+	/if ( ${BuffLevel} <= 110 ) /return 76
+	/if ( ${BuffLevel} <= 115 ) /return 81
+	/if ( ${BuffLevel} <= 120 ) /return 86
+/return 1
+
+Sub PCGroupInvite(string PCTarget)
+	/if ( ${Group.Members} ) {
+		/disband
+		/delay 50 !${Group.Members}
+	}
+	/declare GroupInviteWaitTimer timer ${GroupInviteWaitTime}s
+	/call PCChat ${PCTarget} "You have ${GroupInviteWaitTime} seconds to accept my group invite"
+	/invite ${PCTarget}
+	/while ( ${GroupInviteWaitTimer} ) {
+		/if ( ${Group.Member[${PCTarget}].Index} ) /return TRUE
+		/delay 5
+		}
+/return FALSE
+
+Sub LoadIni
+	/declare	i								int		local
+
+	/call DeclareIniVar	PCIniFile BuffZoneCheck							bool			General
+	/call DeclareIniVar	PCIniFile BuffZoneShortNames				string		General
+	/call DeclareIniVar	PCIniFile BuffZoneErrorAction				string		General
+	/call DeclareIniVar	PCIniFile SpellSet									string		General
+	/call DeclareIniVar	PCIniFile BuffGuildOnly							bool			General
+	/call DeclareIniVar PCIniFile BuffGuildOverride				string		General
+	/call DeclareIniVar	PCIniFile StartupAnnounceMessage		string		General
+	/call DeclareIniVar	PCIniFile StartupClearWindows				bool			General
+	/call DeclareIniVar	PCIniFile UseLogging								bool			General
+	/call DeclareIniVar	PCIniFile IgnoredPCs								string		General
+	/call DeclareIniVar	PCIniFile ListChat									string		General
+	/call DeclareIniVar	PCIniFile ListChatDelay							int				General
+	/call DeclareIniVar	PCIniFile PCChat										string		General
+	/call DeclareIniVar	PCIniFile PCChatDelay								int				General
+	/call DeclareIniVar	PCIniFile ListAll										bool			General
+	/call DeclareIniVar	PCIniFile SpellRefreshWarning				int				General
+	/call DeclareIniVar	PCIniFile GroupInviteWaitTime				int				General
+	/call DeclareIniVar	PCIniFile Reagents									string		General
+	/call DeclareIniVar	PCIniFile	AcceptedItems							string		General
+	
+	/call DeclareIniVar	PCIniFile	HailResponse							string		${Me.Class}
+	/call DeclareIniVar	PCIniFile SpellTotal								int				${Me.Class}
+	/for i 1 to ${SpellTotal}
+		/call DeclareIniVar	PCIniFile SpellName${i}						string		${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellID${i}						int				${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellType${i}						string		${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellInternalKey${i}		string		${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellExternalKey${i}		string		${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellMinTarget${i}			int				${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellMaxTarget${i}			int				${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellMustGroup${i}			bool			${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellTargetCorpse${i}		bool			${Me.Class}
+		/call DeclareIniVar	PCIniFile SpellSkip${i}						string		${Me.Class}
+	/next i
+/return
+
+Sub DeclareIniVar(string IniFile, string VarName, string VarType, string SectionName, string VarValue, string Alias) 
+   /if ( !${Defined[${VarName}]} ) /declare ${VarName} ${VarType} outer
+   /declare TempString string local ${Ini["${${IniFile}}",${SectionName},${VarName},NOTFOUND]}
+   /if ( ${TempString.Equal[NOTFOUND]} ) { 
+      /varset ${VarName} ${VarValue} 
+      /ini "${${IniFile}}" "${SectionName}" "${VarName}" "${${VarName}}" 
+   } else { 
+      /varset ${VarName} ${TempString} 
+   }
+/return
+
+Sub IsMatchTokenizedString(string compareString, string tokenizedString)
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> IsMatchTokenizedString: compareString: ${compareString} in : ${tokenizedString}"
+
+	/if (${Bool[${tokenizedString}]}) {
+		/if (${ShowDebugVerbose}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> comparing: ${tokenizedString}"
+
+		/if (${Select[${compareString}, ${tokenizedString}]}) {
+			/if (${ShowDebugVerbose}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> matched: ${compareString}"
+			/return TRUE
+		}
+	}
+/return FALSE 
+
+Sub IsValidBuffRequest(string ChatLine, string HailSender, string RequestedItem) 
+	/declare i int local
+	/declare matchFilter string local
+	/declare isMatch bool local FALSE
+
+	/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> IsValidBuffRequest fired \nChatLine: ${ChatLine}\nHailSender: ${HailSender}\nRequestedItem: ${RequestedItem}"
+
+	/if (${ChatLine.Find[says, ]} && ${RequestedItem.Equal[list]}) {
+		/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> list command in say ignored"
+		/return FALSE
+	}
+	
+	/if (${ChatLine.Find[Hail, ]}) {
+		/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> ${RequestedItem}, hail command not handled in Event_GemItemAA event"
+		/return FALSE
+	}
+
+	/if (${Me.CleanName.Equal[${HailSender}]}) {
+		/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> Ignore commands from yourself"
+		/return FALSE
+	}
+
+	/if (${ChatLine.Find[tells you,]} && ${RequestedItem.Equal[list]}) {
+		/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> list command in tell is enqueued"
+		/return true
+	}
+	
+	/for i 1 to ${SpellTotal} 
+		/if (${matchFilter.Length} == 0) {
+			/varset matchFilter "${SpellInternalKey${i}}"
+		} else {
+			/varset matchFilter "${matchFilter},${SpellInternalKey${i}}"
+		}
+	/next i 
+
+	/call IsMatchTokenizedString ${RequestedItem} "${matchFilter}"
+	/varset isMatch ${Macro.Return}
+
+	/if (!${isMatch}) {
+		|-- ignore chat line
+		/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> ${Me.CleanName} ignoring buff request: ${RequestedItem}"
+		/return
+	}
+/return TRUE
+
+Sub IsBuffAllowed(string BuffBot, string BuffRecipient, string RequestedBuff)
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> IsBuffAllowed fired, BuffBot: ${BuffBot} , BuffRecipient: ${BuffRecipient}, RequestedBuff: ${RequestedBuff}"
+	
+	/if ( !${CanCastAnywhere} && ${BuffZoneCheck} && ${BuffZoneShortNames.Length} && !${Select[${Zone.ShortName},${BuffZoneShortNames}]} ) {
+		/dgaexecute bots /echo \arERROR:\ax Can't buff in \ag${Zone.ShortName}\ax must be in \am${BuffZoneShortNames}\ax
+		/call LogIt "Can't buff in ${Zone.ShortName} must be in ${BuffZoneShortNames}"
+		/docommand ${BuffZoneErrorAction}
+		/return FALSE
+	}
+
+	/if ( ${RequestedBuff.Find[A.F.K.]} || ${RequestedBuff.Find[AFK]} ) {
+		/call LogIt "Ignored AFK - ${BuffRecipient} - [${RequestedBuff}]"
+		/return FALSE
+	}	
+
+	/if ( ${BuffGuildOnly} && ${Spawn[PC ${BuffRecipient}].Guild.NotEqual[${Me.Guild}]} ) {
+		/call IsMatchTokenizedString ${Spawn[PC ${BuffRecipient}].Guild} "${BuffGuildOverride}"
+		/varset isMatch ${Macro.Return}
+
+		/if (!${isMatch}) {
+			/call LogIt "Ignored /tell - Non-Guild Member - ${BuffRecipient} - [${RequestedBuff}]"
+			/return FALSE
+		}
+	}
+
+	/if ( ${Select[${BuffRecipient},${IgnoredPCs}]}) {
+		/call LogIt "Ignored /tell - IgnoredPCs list - ${BuffRecipient} - [${RequestedBuff}]"
+		/return FALSE
+	}
+
+	/if ( !${Spawn[PC ${BuffRecipient}].LineOfSight} ) {
+		/call LogIt "Ignored /tell - No LOS - ${BuffRecipient} - [${RequestedBuff}]"
+		/return FALSE
+	}
+
+/return TRUE
+
+|-- For tells, and say, process alt abilities or items. 
+Sub Event_GemItemAA(string ChatLine, string HailSender, string RequestedItem)
+	/declare itemCount int local ${RequestedItem.Arg[2,]}
+	/declare requestedItem string local ${RequestedItem.Arg[1,]}
+	/declare i int local 1
+	/declare isGrouped bool local ${Bool[${Me.GroupList} != NULL]}
+	/declare hashKey string local ""
+	/declare buffCount int local 0
+
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> Event_GemItemAA fired, ChatLine: ${ChatLine}, HailSender: ${HailSender}, requestedItem: ${requestedItem}, itemCount: ${itemCount}"
+	
+	/if (${RequestedItem.Find[::you_get_nothing_and_like_it::]}) {
+		/declare naughtyPlayer string local ${ChatLine.Arg[2,|]}
+		/varset hashKey gem_item_aa~${naughtyPlayer}~86
+		/sqlite query buffbots.db bots_eightysix INSERT INTO bots VALUES('${hashKey}', '${Me.CleanName}', '${Me.Class.Name}', '${naughtyPlayer}', 'asshole_banned', 86, 1) ON CONFLICT(buff_hash) DO UPDATE SET buff_state=86, requested_item_count=${itemCount};
+		/return
+	}
+
+	/if (${RequestedItem.Find[::you_get_something_and_like_it::]}) {
+		/declare naughtyPlayer string local ${ChatLine.Arg[2,|]}
+		/varset hashKey gem_item_aa~${naughtyPlayer}~86
+		/sqlite query buffbots.db bots_un_eightysix DELETE FROM bots WHERE buff_hash='${hashKey}';
+		/return
+	}
+
+	|-- Whenever a bot sends out communications, these events will refire. We want to swallow the re-fired events as quickly as possible. 
+	/call IsValidBuffRequest "${ChatLine}" "${HailSender}" "${requestedItem}"
+	/if (!${Macro.Return}) {
+		/return
+	}
+
+	/varset hashKey gem_item_aa~${HailSender}~86
+	/echo ${hashKey}
+	/sqlite query buffbots.db bots_query_naughty select * from bots where buff_hash='${hashKey}';
+	/declare numPendingBuffers int local ${sqlite.rows[bots_query_naughty]}
+	/echo ${numPendingBuffers}
+	/if (${numPendingBuffers} > 0) {
+		/return
+	}
+
+	/if (${itemCount} != 0) {
+		/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> Item count of ${itemCount} given of ${RequestedItem}"
+	} else {
+		/varset itemCount 1
+		/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> No Item count given, assume Item count of ${itemCount} given of ${RequestedItem} "
+	}
+
+	/varset hashKey gem_item_aa~${Me.CleanName}~${HailSender}~${requestedItem}~${itemCount}
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> hashKey: ${hashKey}"
+	/sqlite query buffbots.db bots_query INSERT INTO bots VALUES('${hashKey}', '${Me.CleanName}', '${Me.Class.Name}', '${HailSender}', '${requestedItem}', 1, ${itemCount}) ON CONFLICT(buff_hash) DO UPDATE SET buff_state=1, requested_item_count=${itemCount};
+/return
+
+Sub Event_Hail(string ChatLine, string HailSender, string BuffBot)
+	/declare hashKey string local ""
+
+	/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> Event_Hail fired, ChatLine: ${ChatLine}. HailSender: ${HailSender}. BuffBot: ${BuffBot}"
+	/if ( ${Select[${HailSender},${IgnoredPCs}]} ) {
+		/call LogIt "Ignored Hail - IgnoredPCs list - ${HailSender}"
+		/return
+	}
+	
+	/varset hashKey gem_item_aa~${HailSender}~86
+	/sqlite query buffbots.db bots_query_naughty select * from bots where buff_hash='${hashKey}';
+	/echo ${hashKey}
+	/declare numPendingBuffers int local ${sqlite.rows[bots_query_naughty]}
+	/echo ${numPendingBuffers}
+	/if (${numPendingBuffers} > 0) {
+		/return
+	}
+
+	/varset hashKey hail~${Me.CleanName}~${HailSender}~buff~1
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> hashKey: ${hashKey}"
+	/sqlite query buffbots.db bots_query INSERT INTO bots VALUES('${hashKey}', '${Me.CleanName}', '${Me.Class.Name}', '${HailSender}', 'buff', 1, 1) ON CONFLICT(buff_hash) DO UPDATE SET buff_state=1, requested_item_count=1;
+/return
+
+Sub NotifyPC(string BuffBot, string BuffRecipient, string BuffMessage, string BuffState)
+	/declare buffMessage string local ${BuffMessage}
+	/sqlite query buffbots.db bots_query select buff_bot_class from bots where buff_state=2 and buff_recipient='${BuffRecipient}' and buff_bot != '${Me.CleanName}';
+	/declare numPendingBuffers int local ${sqlite.rows[bots_query]}
+
+	/declare pendingBuffers string local ""
+	/declare pendingBuffer string local ""
+	/declare i int local 0
+
+	/if (${ShowDebug}) /call LogIt "[DEBUG] [${Macro.Name} @ ${Macro.CurLine}] ---> NotifyPC: ${BuffBot}: ${BuffRecipient} :${buffMessage} :${BuffState} :${numPendingBuffers}
+
+	/if (${Select[${BuffState},BUFF_START]}) {
+		/if (${Me.CleanName.Equal[${ChatLeader}]}) {
+			/call PCChatFromLeader "${BuffRecipient}" "${buffMessage}"
+			/return
+		}
+	} 
+
+	/if (${Select[${BuffState},BUFF_COMPLETE,BUFF_ABORT,BUFF_ERROR]}) {
+		/if (${numPendingBuffers} > 0) {
+			/for i 1 to ${numPendingBuffers}
+				/varset pendingBuffer ${sqlite.result[bots_query ${i} buff_bot_class]}
+				/varset pendingBuffers ${pendingBuffers}, ${pendingBuffer}
+			/next i
+			/varset buffMessage In Progress - Be patient, still waiting on: ${pendingBuffers.Right[-4]} to finish...
+		}
+		/call PCChatFromLeader "${BuffRecipient}" "${buffMessage}"
+		/return
+	}
+/return 
+
+Sub ProcessBuff(string BuffHash, string BuffBot, string BuffBotClass, string BuffRecipient, string RequestedBuff, int ItemCount)
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> ProcessBuff:: BuffHash: ${BuffHash}, BuffBot: ${BuffBot}, BuffBotClass: ${BuffBotClass}, BuffRecipient: ${BuffRecipient}, RequestedBuff: ${RequestedBuff}, ItemCount: ${ItemCount}"
+
+	/call IsBuffAllowed "${BuffBot}" "${BuffRecipient}" "${RequestedBuff}"
+	/if (!${Macro.Return}) {
+		|-- Mark buff processed / done
+		/sqlite query buffbots.db bots_query update bots SET buff_state=3 where buff_hash = '${BuffHash}' and buff_state != 3;
+		/return
+	}
+
+	/if ( ${Select[${RequestedBuff},list]}) {
+		/call LogIt "List request from ${BuffRecipient}"
+		/call ListComm ${BuffRecipient}
+		|-- Mark buff processed in the queue / done
+		/sqlite query buffbots.db bots_query update bots SET buff_state=3 where buff_hash = '${BuffHash}' and buff_state != 3;
+		/return
+	}
+
+	/call IsValidBuffRequest "consumed-buff-request" "${BuffRecipient}" "${RequestedBuff}"
+	/if (!${Macro.Return}) {
+		/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> ${BuffBot} ignored buff ${RequestedBuff} for ${BuffRecipient}"
+		|-- Purge invalid buff requests from the queue / done
+		/sqlite query buffbots.db bots_del DELETE FROM bots where buff_hash = '${BuffHash}' and buff_state != 3;
+		/return
+	}
+	
+	/if (${Me.CleanName.Equal[${ChatLeader}]}) {
+		/call PCChatFromLeader "${BuffRecipient}" "Buffs incoming, give us a minute..."
+	}
+
+	/dgaexecute bots /echo \ay${Me.CleanName}\ax is sending buff: \ag[${RequestedBuff}]\ax to \am${BuffRecipient}\ax
+
+	/call ProcComm "${BuffRecipient}" "${RequestedBuff}" "${BuffHash}" ${ItemCount}
+
+	|-- Mark buff processed / done
+	/sqlite query buffbots.db bots_query update bots SET buff_state=3 where buff_hash = '${BuffHash}' and buff_state != 3;
+
+	/if (${Group.Members} > 0) {
+		/disband
+	}
+
+/return
+
+Sub ConsumeQueue()
+	|-- Define a buff cycle for this bot to process. 
+	|-- We can receive new requests during our process cycle, but we only want to process this batch, this iteration
+	/sqlite query buffbots.db bots_query_enqueue update bots SET buff_state=2 where buff_bot = '${Me.CleanName}' and buff_state=1;
+
+	|-- iterate through current buff cycle for this bot
+	/sqlite query buffbots.db bots_query select * from bots where buff_bot = '${Me.CleanName}' and buff_state=2;
+	/declare buffCount int local 0
+	/declare i int local 0
+
+	/varset buffCount ${sqlite.rows[bots_query]}
+
+	/if (${buffCount} == 0) {
+		/return
+	}
+
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> buffCount: ${buffCount}"
+
+	/for i 1 to ${buffCount}
+		/call ProcessBuff "${sqlite.result[bots_query ${i} buff_hash]}" "${sqlite.result[bots_query ${i} buff_bot]}" "${sqlite.result[bots_query ${i} buff_bot_class]}" "${sqlite.result[bots_query ${i} buff_recipient]}" "${sqlite.result[bots_query ${i} buff_list]}" "${sqlite.result[bots_query ${i} requested_item_count]}"
+	/next i
+
+/return
+
+Sub Event_BindPortalReturnTrip(string line)
+	/delay 35
+	/varset CanCastAnywhere FALSE
+
+	/if (${ShowDebugVerbose}) /call LogIt "[DEBUG_VERBOSE] [${Macro.Name} @ ${Macro.CurLine}] ---> Event_BindPortalReturnTrip: ${line}"
+
+	/if (${Me.Class.ShortName.NotEqual[DRU]} && ${Me.Class.ShortName.NotEqual[WIZ]}) {
+		/return
+	}
+		
+	/echo \ayGating back.\ax
+	/delay 35
+	/disband
+	/casting "Primary Anchor Ring" "gem13"
+/return
