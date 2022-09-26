@@ -57,7 +57,7 @@ if __name__ == "__main__":
     argparse = argparse.ArgumentParser(description="Parse EQ Raid achievements output file")
     argparse.add_argument("-c", "--character", help="Character name", dest="character", required=True)
     argparse.add_argument("-s", "--server", help="Server name of character", dest="server", default="povar", required=False)
-    argparse.add_argument("-e", "--expansion", help="Name of expanion", dest="expac", default="Terror of Luclin", required=False)
+    argparse.add_argument("-e", "--expansion", help="Name of expansion", dest="expac", default="Terror of Luclin", required=False)
     argparse.add_argument("-p", "--eqFilePath", help="Root path of everquest", dest="eqFilePath", default=f"{eqFilePathDefault}")
     parsed = argparse.parse_args()
 
