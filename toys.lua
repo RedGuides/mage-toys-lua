@@ -6,7 +6,7 @@ local item_names = {
 }
 
 local mq = require('mq')
-local version = '1.1.1'
+local version = '1.1.2'
 mq.TLO.Lua.Turbo(500)
 
 local DEBUG = false
