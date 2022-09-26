@@ -1,5 +1,19 @@
 import argparse
 
+"""
+example usages: 
+$ python3 achieve.py --help
+$ python3 achieve -c hisRoyalUberness
+$ python3 achieve --character hisRoyalUberness --server zek --expansion "Terror of Luclin" --eqPath $EVERQUEST_ROOT 
+
+defaults:
+------------
+server: povar (sorry)
+expansion: Terror of Luclin
+eq file path: default eq path in windows linux subsystem (sorry)
+
+You can set and pass in an environment variable fir eq root path, like in examples
+"""
 eqFilePathDefault = "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/Everquest/"
 
 def readFile(fileName):
