@@ -12,7 +12,7 @@ server: povar (sorry)
 expansion: Terror of Luclin
 eq file path: default eq path in windows linux subsystem (sorry)
 
-You can set and pass in an environment variable fir eq root path, like in examples
+You can set and pass in an environment variable for eq root path, like in example above
 """
 eqFilePathDefault = "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/Everquest/"
 
@@ -50,7 +50,7 @@ def main(character, server, eqFilePath, expac):
     missingAchievements = []
     matchFound = False
 
-    print(f"search block: [{startSearch}]...[{endSearch}]")
+    print(f"Search block: [{startSearch}]...[{endSearch}]")
 
     # parse achievements output file
     for line in lines:
