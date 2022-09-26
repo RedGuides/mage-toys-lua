@@ -51,7 +51,6 @@ def main(character, server, eqFilePath, expac):
                 cleanLine = line.replace("I\t\t", "")
                 missingAchievements.append(cleanLine)
 
-    print(missingAchievements)
     printResults(missingAchievements)
 
 if __name__ == "__main__":
