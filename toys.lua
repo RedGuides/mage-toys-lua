@@ -1,8 +1,8 @@
 local item_names = {
     ['mask']= 'Summoned: Visor of Shoen',
     ['armor']='Folded Pack of the Alloy\'s Plate',
-    ['heirlooms']='Folded Pack of the Ankexfen Heirlooms',
-    ['weapons']='Folded Pack of the Golliath\'s Armaments'
+    ['heirlooms']='Folded Pack of Ankexfen Heirlooms',
+    ['weapons']='Folded Pack of Goliath\'s Armaments'
 }
 
 local mq = require('mq')
