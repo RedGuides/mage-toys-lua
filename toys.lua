@@ -1,13 +1,13 @@
 local item_names = {
     ['mask']= 'Summoned: Visor of Shoen',
-    ['armor']='Folded Pack of the Centien\'s Plate',
-    ['heirlooms']='Folded Pack of the Diabo\'s Heirlooms',
-    ['weapons']='Folded Pack of Shak Dathor\'s Armaments'
+    ['armor']='Folded Pack of the Alloy\'s Plate',
+    ['heirlooms']='Folded Pack of the Ankexfen Heirlooms',
+    ['weapons']='Folded Pack of the Golliath\'s Armaments'
 }
 
 local mq = require('mq')
-local version = '1.1.2'
-mq.TLO.Lua.Turbo(500)
+local version = '1.2.0'
+-- mq.TLO.Lua.Turbo(500) -- we should not need to govern the turbo rate.
 
 local DEBUG = false
 local RUN_STATE = 'idle'
