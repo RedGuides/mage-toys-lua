@@ -2,7 +2,8 @@ local item_names = {
     ['mask']= 'Summoned: Visor of Shoen',
     ['armor']='Folded Pack of the Alloy\'s Plate',
     ['heirlooms']='Folded Pack of Ankexfen Heirlooms',
-    ['weapons']='Folded Pack of Goliath\'s Armaments'
+    ['weapons']='Folded Pack of Goliath\'s Armaments',
+    ['weapons_container']='Phantom Weapon Pack' -- used to be Pouch of Quellious
 }
 
 local mq = require('mq')
@@ -354,7 +355,7 @@ local function GiveContainerItemsToPet(main_inventory_slot, original_inventory_s
 
     local num_pack_items = mq.TLO.InvSlot(current_pack).Item.Container()
 
-    if (container_name == 'Pouch of Quellious') then
+    if (container_name == item_names['weapons_container']) then
         GivePetWeapons(current_pack, num_pack_items, original_inventory_slot)
     else
         GivePetArmor(current_pack, num_pack_items, original_inventory_slot)
